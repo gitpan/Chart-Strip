@@ -5,9 +5,9 @@
 # Date: 2002-Nov-01 16:11 (EST)
 # Function: draw strip charts
 #
-# $Id: Strip.pm,v 1.7 2004/02/12 23:05:08 jaw Exp jaw $
+# $Id: Strip.pm,v 1.10 2004/02/14 16:54:08 jaw Exp jaw $
 
-$Chart::Strip::VERSION = "1.0";
+$Chart::Strip::VERSION = "1.01";
 
 =head1 NAME
 
@@ -116,8 +116,9 @@ should be a hash ref containing:
     {
 	time  => $time_t,  # must be a unix time_t 
 	value => $value,   # the data value
-	color => $color,   # optional
+	color => $color,   # optional, used for this one point
     }
+
 or, range style graphs should contain:
     
     {
@@ -130,11 +131,14 @@ or, range style graphs should contain:
 and the options may contain:
     
     {
+	style => 'line',	     # graph style: line, filled, range, points
 	color => 'FF00FF',           # color used for the graph
 	label => 'New England',      # name of the data set
     }
 
 =head2 Outputing The Image
+
+=over 4
 
 =item $chart->png()
 
@@ -148,16 +152,15 @@ Will return the jpeg image
 
 Will return the underlying GD object.
     
+=back
 
 =cut
     ;
-
 
 package Chart::Strip;
 use GD;
 use Carp;
 use POSIX;
-
 use strict;
 
 sub new {
@@ -198,12 +201,13 @@ sub new {
     # But added colors to the world reveal'd: 
     # When early Turnus, wak'ning with the light, 
     #   -- Virgil, Aeneid
-    # allocate some useful colors
+    # allocate some useful colors, 1st is used for bkg
+    $me->color({ color => $me->{background_color} }) if $me->{background_color};
     $me->{color}{white} = $im->colorAllocate(255,255,255);
     $me->{color}{black} = $im->colorAllocate(0,0,0);
     $me->{color}{blue}  = $im->colorAllocate(0, 0, 255);
     $me->{color}{red}   = $im->colorAllocate(255, 0, 0);
-    $me->{color}{grn}   = $im->colorAllocate(0, 255, 0);
+    $me->{color}{green} = $im->colorAllocate(0, 255, 0);
     $me->{color}{gray}  = $im->colorAllocate(128, 128, 128);
 
     # style for grid lines
@@ -213,12 +217,12 @@ sub new {
     $me->{img}->transparent($me->{color}{white})
 	if $me->{transparent};
 
-    $me->{img}->rectangle(0, 0, $me->{width}-1, $me->{height}-1, $me->{color}{black})
+    $me->{img}->rectangle(0, 0, $me->{width}-1, $me->{height}-1,
+	     $me->color({ color => ($me->{border_color} || 'black') }))
 	if $me->{draw_border};
 
     $me;
 }
-
 
 sub add_data {
     my $me   = shift;
@@ -272,14 +276,13 @@ sub plot {
 }
 
 
-
 # The axis of the earth sticks out visibly through the centre of each and every town or city.
 #   -- Oliver Wendell Holmes, The Autocrat of the Breakfast-Table    
 sub axii {
     my $me = shift;
     my $im = $me->{img};
-    # draw axii
 
+    # draw axii
     $im->line( $me->xpt(-1), $me->ypt(-1), $me->xpt(-1), $me->ypt($me->{ymax}), $me->{color}{black});
     $im->line( $me->xpt(-1), $me->ypt(-1), $me->xpt($me->{xmax}), $me->ypt(-1), $me->{color}{black});
     
@@ -339,6 +342,7 @@ sub ydatapt {
     my $pt = shift;
 
     $pt = $pt < $me->{yd_min} ? $me->{yd_min} : $pt;
+    $pt = $pt > $me->{yd_max} ? $me->{yd_max} : $pt;
     
     $me->ypt( ($pt - $me->{yd_min}) * $me->{yd_scale} );
 }
@@ -365,17 +369,21 @@ sub adjust {
 sub analyze {
     my $me   = shift;
     my $data = shift;
-    my( $st, $et, $min, $max );
+    my( $st, $et, $pt, $min, $max );
 
     $st = $data->[0]{time};	# start time
     $et = $data->[-1]{time};	# end time
-
+    $pt = $st;
+    
     foreach my $s (@$data){
+	croak "data point out of order" if $s->{time} < $pt;
 	my $a = defined $s->{min} ? $s->{min} : $s->{value};
 	my $b = defined $s->{max} ? $s->{max} : $s->{value};
-
+	($a, $b) = ($b, $a) if $a > $b;
+	
 	$min = $a if !defined($min) || $a < $min;
 	$max = $b if !defined($max) || $b > $max;
+	$pt  = $s->{time};
     }
 
     $me->{xd_min} = $st  if $st && (!defined($me->{xd_min}) || $st  < $me->{xd_min});
@@ -430,7 +438,7 @@ sub color {
 	return $i;
     }
     
-    return $me->{color}{grn};
+    return $me->{color}{green};
 }
 
 # Titles are marks of honest men, and wise;
@@ -471,7 +479,7 @@ sub ylabel {
     $me->adjust();
     $loc = ($me->{height} + length($me->{y_label}) * 6) / 2;
     $me->{img}->stringUp(gdSmallFont, 2, $loc, $me->{y_label}, $me->{color}{black});
-    # small => 12, 6; tiny => 10,5
+    # small => 12,6; tiny => 10,5
 }
 
 # It must be a very pretty dance
@@ -499,7 +507,7 @@ sub pretty {
 	    $y *= $b**2; $st *= $b**2;
 	    $sc = 'u';
 	}
-	elsif( $ay < 100/$b ){
+	elsif( $ay < 100/$b ){ # QQQ
 	    $y *= $b; $st *= $b;
 	    $sc = 'm';
 	}
@@ -542,7 +550,7 @@ sub ytics {
 	push @tics, [$me->ydatapt($min), $lb, $w];
 	$maxw = $w;
     }else{
-	$tp = ($max - $min) / $me->{n_y_tics};	# approx # of tics
+	$tp = ($max - $min) / $me->{n_y_tics};	# approx spacing of tics
 	if( $me->{binary} ){
 	    $is =  2 ** floor( log($tp)/log(2) );
 	}else{
@@ -550,7 +558,7 @@ sub ytics {
 	}
 	$st  = floor( $tp / $is ) * $is; # -> 4 - 8, ceil -> 2 - 4
 	$low = int( $min / $st ) * $st;
-	for my $i ( 0 .. 10 ){
+	for my $i ( 0 .. (2 * $me->{n_y_tics} + 2) ){
 	    my $y = $low + $i * $st;
 	    next if $y < $min;
 	    last if $y > $max;
@@ -613,6 +621,11 @@ sub drawgrid {
 
 	if( $me->{draw_tic_labels} ){
 	    my $a = length($label) * 6 / 4;	# it looks better not quite centered
+	    if( length($label)*6 * 3/4 + $me->xdatapt($t) > $me->{width} ){
+		# too close to edge, shift
+		$a = $me->xdatapt($t) - $me->{width} + length($label) * 6 + 2;
+	    }
+	    
 	    $me->{img}->string(gdSmallFont, $me->xdatapt($t)-$a, $me->ypt(-6),
 			       $label, $ll ? $me->{color}{red} : $me->{color}{black} );
 	}
@@ -627,7 +640,7 @@ sub xtics {
     # this is good for (roughly) 10 mins - 10 yrs
     return if $me->{xd_max} == $me->{xd_min};
     $r = ($me->{xd_max} - $me->{xd_min} ) / 3600;	# => hours
-    $rd   = $r / 24;
+    $rd   = $r / 24;					# days
     $step = 3600;
     $n2   = 24; $n3 = $n4 = 1;
     $low  = int($me->{xd_min} / 3600) * 3600;
@@ -718,7 +731,7 @@ sub clabels {
 	next unless $l;
 	my $w = length($l) * 5 + 6;
 	
-	if( $tw + $w > $me->{width} - 32 ){
+	if( $tw + $w > $me->{width} - $me->{margin_left} - $me->{margin_right} ){
 	    $r ++;
 	    $tw = 0;
 	}
@@ -730,7 +743,7 @@ sub clabels {
     foreach my $x (@cx){
 	my $y = $me->{height} - ($r - $x->[2] + 1) * 10;
 	my $c = $x->[3];
-	$me->{img}->string(gdTinyFont, $x->[1] + 16, $y, $x->[0], $me->color({color => $c}));
+	$me->{img}->string(gdTinyFont, $x->[1] + $me->{margin_left}, $y, $x->[0], $me->color({color => $c}));
     }
     if( @cx ){
 	$me->{margin_bottom} += ($r + 1) * 10;
@@ -744,10 +757,6 @@ sub plot_data {
     my $opts = shift;
 
     return unless $data && @$data;
-    if( @$data < 3 ){
-	# ...
-	return;
-    }
     
     # 'What did they draw?' said Alice, quite forgetting her promise.
     #   -- Alice in Wonderland
@@ -765,8 +774,12 @@ sub plot_data {
 	# did you ever see such a thing as a drawing of a muchness?
 	#    -- Alice in Wonderland
 	$me->draw_range( $data, $opts );
+    }elsif( $opts->{style} eq 'points' ){
+        # and they drew all manner of things--everything that begins with an M--'
+	#    -- Alice in Wonderland
+	$me->draw_points( $data, $opts );
     }else{
-	croak "unkown graph style--cannot draw";
+	croak "unknown graph style--cannot draw";
     }
 }
 
@@ -778,27 +791,30 @@ sub draw_filled {
     my $me   = shift;
     my $data = shift;
     my $opts = shift;
-    
-    my $limit = 4 * ($me->{xd_max} - $me->{xd_min}) / @$data;
-    my($px, $py) = ($data->[0]{time}, $data->[0]{value});
+
+    my $im = $me->{img};
+    my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
+    my($px, $py);
     
     foreach my $s ( @$data ){
 	my $x = $s->{time};
 	my $y = $s->{value};
+
+	next if $x < $me->{xd_min} || $x > $me->{xd_max};
 	
-	if( $me->xdatapt($x) - $me->xdatapt($px) > 1 ){
-	    $px = $x - $limit if $x - $px > $limit;
+	if( defined($px) && ($me->xdatapt($x) - $me->xdatapt($px) > 1) ){
+	    $px = $x - $limit if $limit && $x - $px > $limit;
 	    
 	    my $poly = GD::Polygon->new;
 	    $poly->addPt($me->xdatapt($px), $me->ypt(0));
 	    $poly->addPt($me->xdatapt($px), $me->ydatapt($py));
 	    $poly->addPt($me->xdatapt($x),  $me->ydatapt($y));
 	    $poly->addPt($me->xdatapt($x),  $me->ypt(0));
-	    $me->{img}->filledPolygon($poly, $me->color($s, $opts));
+	    $im->filledPolygon($poly, $me->color($s, $opts));
 	}else{
-	    $me->{img}->line( $me->xdatapt($x), $me->ypt(0),
-			      $me->xdatapt($x), $me->ydatapt($y),
-			      $me->color($s, $opts) );
+	    $im->line( $me->xdatapt($x), $me->ypt(0),
+		       $me->xdatapt($x), $me->ydatapt($y),
+		       $me->color($s, $opts) );
 	}
 	$px = $x; $py = $y;
     }
@@ -809,20 +825,27 @@ sub draw_line {
     my $data = shift;
     my $opts = shift;
 
-    my $limit = 4 * ($me->{xd_max} - $me->{xd_min}) / @$data;
-    my($px, $py) = ($data->[0]{time}, $data->[0]{value});
-
+    my $im = $me->{img};
+    my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
+    my($px, $py);
+    
     foreach my $s ( @$data ){
 	my $x = $s->{time};
 	my $y = $s->{value};
-	$px = $x - $limit if $x - $px > $limit;
-	
-	$me->{img}->line( $me->xdatapt($px), $me->ydatapt($py),
-			  $me->xdatapt($x),  $me->ydatapt($y),
+
+	next if $x < $me->{xd_min} || $x > $me->{xd_max};
+
+	if( defined($px) ){
+	    $px = $x - $limit if $limit && $x - $px > $limit;
+	    $im->line( $me->xdatapt($px), $me->ydatapt($py),
+		       $me->xdatapt($x),  $me->ydatapt($y),
+		       $me->color($s, $opts) );
+	}else{
+	    $im->setPixel($me->xdatapt($x),  $me->ydatapt($y),
 			  $me->color($s, $opts) );
+	}
 	$px = $x; $py = $y;
-    }
-    
+    }    
 }
 
 sub draw_range {
@@ -830,35 +853,64 @@ sub draw_range {
     my $data = shift;
     my $opts = shift;
 
-    my $limit = 4 * ($me->{xd_max} - $me->{xd_min}) / @$data;
+    my $im = $me->{img};
+    my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
+    my($px, $pn, $pm);
     
-    my($px, $pn, $pm) = ($data->[0]{time}, $data->[0]{min}, $data->[0]{max});
     foreach my $s ( @$data ){
 	  my $x = $s->{time};
-	  my $a = $s->{min};
-	  my $b = $s->{max};
+	  my $a = defined $s->{min} ? $s->{min} : $s->{value};
+	  my $b = defined $s->{max} ? $s->{max} : $s->{value};
 
-	  if( $me->xdatapt($x) - $me->xdatapt($px) > 1 ){
+	  next if $x < $me->{xd_min} || $x > $me->{xd_max};
+	  
+	  if( defined($px) && ($me->xdatapt($x) - $me->xdatapt($px) > 1) ){
 	      my $poly = GD::Polygon->new;
-	      $px = $x - $limit if $x - $px > $limit;
+	      $px = $x - $limit if $limit && $x - $px > $limit;
 	      
 	      $poly->addPt($me->xdatapt($px), $me->ydatapt($pn));
 	      $poly->addPt($me->xdatapt($px), $me->ydatapt($pm));
 	      $poly->addPt($me->xdatapt($x),  $me->ydatapt($b));
 	      $poly->addPt($me->xdatapt($x),  $me->ydatapt($a));
-	      $me->{img}->filledPolygon($poly, $me->color($s, $opts));
+	      $im->filledPolygon($poly, $me->color($s, $opts));
 	  }else{
-	      $me->{img}->line( $me->xdatapt($x),  $me->ydatapt($b),
-				$me->xdatapt($x),  $me->ydatapt($a),
-				$me->color($s, $opts) );
+	      $im->line( $me->xdatapt($x),  $me->ydatapt($b),
+			 $me->xdatapt($x),  $me->ydatapt($a),
+			 $me->color($s, $opts) );
 	  }
 	  $px = $x; $pn = $a; $pm = $b;
     }
 }
 
+sub draw_points {
+    my $me   = shift;
+    my $data = shift;
+    my $opts = shift;
+    
+    my $im = $me->{img};
+    
+    foreach my $s ( @$data ){
+	my $x = $s->{time};
+	my $y = $s->{value};
+	my $d = $s->{diam} || $opts->{diam} || 4;
+	my $c = $me->color($s, $opts);
+
+	next if $x < $me->{xd_min} || $x > $me->{xd_max};
+
+	while( $d > 0 ){
+	    $im->arc( $me->xdatapt($x),  $me->ydatapt($y),
+		      $d, $d, 0, 360,
+		      $c );
+	    $d -= 2;
+	}
+    }
+}
+
+
 =head1 EXAMPLE IMAGES
 
     http://argus.tcp4me.com/shots.html
+    http://search.cpan.org/src/JAW/Chart-Strip-1.01/eg/
 
 =head1 BUGS
 

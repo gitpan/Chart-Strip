@@ -5,6 +5,7 @@ Makefile.PL
 Strip.pm
 t/test1.t
 t/test2.t
+eg/index.html
 eg/ex1.pl
 eg/ex2.pl
 eg/ex3.pl
