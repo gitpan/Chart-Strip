@@ -1,0 +1,13 @@
+MANIFEST
+README
+INSTALL
+Makefile.PL
+Strip.pm
+t/test1.t
+t/test2.t
+eg/ex1.pl
+eg/ex2.pl
+eg/ex3.pl
+eg/ex1.png
+eg/ex2.png
+eg/ex3.png
