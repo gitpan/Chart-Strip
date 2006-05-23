@@ -2,7 +2,6 @@
 # -*- perl -*-
 
 use Chart::Strip;
-
 my $img = Chart::Strip->new(title   => 'Happiness of Club Members',
 			    x_label => 'When',
 			    y_label => 'Happiness Factor',

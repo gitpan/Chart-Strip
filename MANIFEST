@@ -6,9 +6,14 @@ Strip.pm
 t/test1.t
 t/test2.t
 eg/index.html
+eg/Makefile
 eg/ex1.pl
 eg/ex2.pl
 eg/ex3.pl
+eg/ex4.pl
+eg/ex5.pl
 eg/ex1.png
 eg/ex2.png
 eg/ex3.png
+eg/ex4.png
+eg/ex5.png

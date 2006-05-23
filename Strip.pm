@@ -5,9 +5,9 @@
 # Date: 2002-Nov-01 16:11 (EST)
 # Function: draw strip charts
 #
-# $Id: Strip.pm,v 1.10 2004/02/14 16:54:08 jaw Exp jaw $
+# $Id: Strip.pm,v 1.13 2006/05/23 15:43:11 jaw Exp jaw $
 
-$Chart::Strip::VERSION = "1.01";
+$Chart::Strip::VERSION = "1.03";
 
 =head1 NAME
 
@@ -103,7 +103,25 @@ Should the grid be drawn over the data (1) or below the data (0)?
 =item C<binary>
 
 Use powers of 2 instead of powers of 10 for the y axis labels.    
-    
+
+=item C<data_label_style>
+
+Style for drawing the graph labels. C<text> or C<box>
+
+=item C<thickness>
+
+Thickness of lines in pixels. (Requires GD newer than $VERSION).
+
+=item C<skip_undefined>
+
+Don\'t draw a line into or out of a datapoint whose value is undefined.
+If false, undefined values are treated as though they were 0.
+
+=item C<boxwidth>
+
+Width of boxes for box style graphs. The width may also be specified as C<width>
+in the data options or per point. If no width is specified a reasonable default is used.
+
 =back
 
 =head2 Adding Data
@@ -131,10 +149,14 @@ or, range style graphs should contain:
 and the options may contain:
     
     {
-	style => 'line',	     # graph style: line, filled, range, points
+	style => 'line',	     # graph style: line, filled, range, points, box
 	color => 'FF00FF',           # color used for the graph
 	label => 'New England',      # name of the data set
     }
+
+points style graphs may specify the point diameter, as C<diam>
+
+box style graphs may specify the box width, as C<width>
 
 =head2 Outputing The Image
 
@@ -176,19 +198,22 @@ sub new {
 	margin_top    => 8,
 	n_y_tics      => 4, # aprox.
 	
-	transparent     => 1,
-	grid_on_top     => 1,
-	draw_grid       => 1,
-	draw_border     => 1,
-	draw_tic_labels => 1,
-	draw_data_labels=> 1,
+	transparent      => 1,
+	grid_on_top      => 1,
+	draw_grid        => 1,
+	draw_border      => 1,
+	draw_tic_labels  => 1,
+	draw_data_labels => 1,
+	limit_factor     => 0,
+	data_label_style => 'text',  # or 'box'
+	thickness	 => 1,
 	
 	# title
 	# x_label
 	# y_label
 	
 	# user specified params override defaults
-	%param
+	%param,
 	    
     }, $class;
 
@@ -229,7 +254,7 @@ sub add_data {
     my $data = shift;
     my $opts = shift;
 
-    $me->analyze( $data );
+    $me->analyze( $data, $opts );
     
     unless( $opts->{style} ){
 	$opts->{style} = defined $data->[0]{min} ? 'range' : 'line';
@@ -248,11 +273,12 @@ sub plot {
     return unless $me->{data};
     return if $me->{all_done};
     
+    $me->adjust();
     $me->clabels();
     $me->xlabel();
     $me->ylabel();
     $me->title();
-
+    
     if( $me->{draw_tic_labels} ){
 	# move margin for xtics before we do ytics
 	$me->{margin_bottom} += 12;
@@ -289,6 +315,16 @@ sub axii {
     # 'Talking of axes,' said the Duchess, 'chop off her head!'
     #   -- Alice in Wonderland
     $me;
+}
+
+sub set_thickness {
+    my $me = shift;
+    my $tk = shift;
+    my $im = $me->{img};
+
+    # not available until gd 2.07
+    return unless $im->can('setThickness');
+    $im->setThickness($tk);
 }
 
 sub gd {
@@ -369,6 +405,7 @@ sub adjust {
 sub analyze {
     my $me   = shift;
     my $data = shift;
+    my $opts = shift;
     my( $st, $et, $pt, $min, $max );
 
     $st = $data->[0]{time};	# start time
@@ -379,19 +416,33 @@ sub analyze {
 	croak "data point out of order" if $s->{time} < $pt;
 	my $a = defined $s->{min} ? $s->{min} : $s->{value};
 	my $b = defined $s->{max} ? $s->{max} : $s->{value};
+	$a ||= 0 unless $me->{skip_undefined} || $opts->{skip_undefined};
+	$b ||= 0 unless $me->{skip_undefined} || $opts->{skip_undefined};
 	($a, $b) = ($b, $a) if $a > $b;
 	
-	$min = $a if !defined($min) || $a < $min;
-	$max = $b if !defined($max) || $b > $max;
+	$min = $a if defined($a) && ( !defined($min) || $a < $min );
+	$max = $b if defined($b) && ( !defined($max) || $b > $max );
 	$pt  = $s->{time};
     }
 
+    if( $opts->{style} eq 'box' ){
+	# stretch x axis if drawing wide boxes
+	my $defwid = def_box_width($st, $et, scalar(@$data));
+	my $w = $data->[0]{width} || $opts->{width} || $me->{boxwidth} || $defwid;
+	$st -= $w/2;
+
+	$w = $data->[-1]{width} || $opts->{width} || $me->{boxwidth} || $defwid;
+	$et += $w/2;
+
+	# boxes are drawn from y=0
+	$min = 0 if $min > 0;
+    }
+    
     $me->{xd_min} = $st  if $st && (!defined($me->{xd_min}) || $st  < $me->{xd_min});
     $me->{xd_max} = $et  if $et && (!defined($me->{xd_max}) || $et  > $me->{xd_max});
     $me->{yd_min} = $min if         !defined($me->{yd_min}) || $min < $me->{yd_min};
     $me->{yd_max} = $max if         !defined($me->{yd_max}) || $max > $me->{yd_max};
 
-    $me->adjust();
 }
 
 # I hear beyond the range of sound,
@@ -720,8 +771,16 @@ sub clabels {
     my $me = shift;
 
     return unless $me->{draw_data_labels};
+    
+    my $rs = 0;
+    my $rm = 0;
+    if( $me->{data_label_style} eq 'box' ){
+        $rs = 6;
+        $rm = 3;
+    }
 
     my( $tw, $r, @cl, @cx );
+    $tw = $r = 0;
     # round the neck of the bottle was a paper label, with the
     # words 'DRINK ME' beautifully printed on it in large letters
     #   -- Alice in Wonderland
@@ -730,6 +789,7 @@ sub clabels {
 	my $c = $d->{opts}{color};
 	next unless $l;
 	my $w = length($l) * 5 + 6;
+	$w += $rm + $rs;
 	
 	if( $tw + $w > $me->{width} - $me->{margin_left} - $me->{margin_right} ){
 	    $r ++;
@@ -741,9 +801,16 @@ sub clabels {
 
     my $i = 0;
     foreach my $x (@cx){
+        my $xx = $x->[1] + $me->{margin_left};
 	my $y = $me->{height} - ($r - $x->[2] + 1) * 10;
 	my $c = $x->[3];
-	$me->{img}->string(gdTinyFont, $x->[1] + $me->{margin_left}, $y, $x->[0], $me->color({color => $c}));
+        if( $rs ){
+            $me->{img}->filledRectangle($xx, $y+1, $xx+$rs, $y+$rs+1, $me->color({color => $c}));
+            $me->{img}->rectangle($xx, $y+1, $xx+$rs, $y+$rs+1, $me->{color}{black});
+            $me->{img}->string(gdTinyFont, $xx+$rs+$rm, $y, $x->[0], $me->{color}{black});
+        }else{
+            $me->{img}->string(gdTinyFont, $xx, $y, $x->[0], $me->color({color => $c}));
+        }
     }
     if( @cx ){
 	$me->{margin_bottom} += ($r + 1) * 10;
@@ -778,6 +845,8 @@ sub plot_data {
         # and they drew all manner of things--everything that begins with an M--'
 	#    -- Alice in Wonderland
 	$me->draw_points( $data, $opts );
+    }elsif( $opts->{style} eq 'box' ){
+	$me->draw_boxes( $data, $opts );
     }else{
 	croak "unknown graph style--cannot draw";
     }
@@ -794,6 +863,7 @@ sub draw_filled {
 
     my $im = $me->{img};
     my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
+    my $skipundef = $opts->{skip_undefined} || $me->{skip_undefined};
     my($px, $py);
     
     foreach my $s ( @$data ){
@@ -801,20 +871,23 @@ sub draw_filled {
 	my $y = $s->{value};
 
 	next if $x < $me->{xd_min} || $x > $me->{xd_max};
-	
-	if( defined($px) && ($me->xdatapt($x) - $me->xdatapt($px) > 1) ){
-	    $px = $x - $limit if $limit && $x - $px > $limit;
-	    
-	    my $poly = GD::Polygon->new;
-	    $poly->addPt($me->xdatapt($px), $me->ypt(0));
-	    $poly->addPt($me->xdatapt($px), $me->ydatapt($py));
-	    $poly->addPt($me->xdatapt($x),  $me->ydatapt($y));
-	    $poly->addPt($me->xdatapt($x),  $me->ypt(0));
-	    $im->filledPolygon($poly, $me->color($s, $opts));
-	}else{
-	    $im->line( $me->xdatapt($x), $me->ypt(0),
-		       $me->xdatapt($x), $me->ydatapt($y),
-		       $me->color($s, $opts) );
+
+	if( defined($y) || !$skipundef ){
+
+	    if( defined($px) && ($me->xdatapt($x) - $me->xdatapt($px) > 1) ){
+		$px = $x - $limit if $limit && $x - $px > $limit;
+		
+		my $poly = GD::Polygon->new;
+		$poly->addPt($me->xdatapt($px), $me->ypt(0));
+		$poly->addPt($me->xdatapt($px), $me->ydatapt($py));
+		$poly->addPt($me->xdatapt($x),  $me->ydatapt($y));
+		$poly->addPt($me->xdatapt($x),  $me->ypt(0));
+		$im->filledPolygon($poly, $me->color($s, $opts));
+	    }else{
+		$im->line( $me->xdatapt($x), $me->ypt(0),
+			   $me->xdatapt($x), $me->ydatapt($y),
+			   $me->color($s, $opts) );
+	    }
 	}
 	$px = $x; $py = $y;
     }
@@ -827,7 +900,11 @@ sub draw_line {
 
     my $im = $me->{img};
     my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
+    my $thick = $opts->{thickness} || $me->{thickness};
+    my $skipundef = $opts->{skip_undefined} || $me->{skip_undefined};
     my($px, $py);
+
+    $me->set_thickness( $thick ) if $thick;
     
     foreach my $s ( @$data ){
 	my $x = $s->{time};
@@ -835,17 +912,20 @@ sub draw_line {
 
 	next if $x < $me->{xd_min} || $x > $me->{xd_max};
 
-	if( defined($px) ){
-	    $px = $x - $limit if $limit && $x - $px > $limit;
-	    $im->line( $me->xdatapt($px), $me->ydatapt($py),
-		       $me->xdatapt($x),  $me->ydatapt($y),
-		       $me->color($s, $opts) );
-	}else{
-	    $im->setPixel($me->xdatapt($x),  $me->ydatapt($y),
-			  $me->color($s, $opts) );
+	if( defined($y) || !$skipundef ){
+	    if( defined($py) ){
+		$px = $x - $limit if $limit && $x - $px > $limit;
+		$im->line( $me->xdatapt($px), $me->ydatapt($py),
+			   $me->xdatapt($x),  $me->ydatapt($y),
+			   $me->color($s, $opts) );
+	    }else{
+		$im->setPixel($me->xdatapt($x),  $me->ydatapt($y),
+			      $me->color($s, $opts) );
+	    }
 	}
 	$px = $x; $py = $y;
-    }    
+    }
+    $me->set_thickness( 1 ) if $thick;
 }
 
 sub draw_range {
@@ -855,6 +935,7 @@ sub draw_range {
 
     my $im = $me->{img};
     my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
+    my $skipundef = $opts->{skip_undefined} || $me->{skip_undefined};
     my($px, $pn, $pm);
     
     foreach my $s ( @$data ){
@@ -863,20 +944,26 @@ sub draw_range {
 	  my $b = defined $s->{max} ? $s->{max} : $s->{value};
 
 	  next if $x < $me->{xd_min} || $x > $me->{xd_max};
+
+	  $a = $b if !defined($a) && $skipundef;
+	  $b = $a if !defined($b) && $skipundef;
 	  
-	  if( defined($px) && ($me->xdatapt($x) - $me->xdatapt($px) > 1) ){
-	      my $poly = GD::Polygon->new;
-	      $px = $x - $limit if $limit && $x - $px > $limit;
-	      
-	      $poly->addPt($me->xdatapt($px), $me->ydatapt($pn));
-	      $poly->addPt($me->xdatapt($px), $me->ydatapt($pm));
-	      $poly->addPt($me->xdatapt($x),  $me->ydatapt($b));
-	      $poly->addPt($me->xdatapt($x),  $me->ydatapt($a));
-	      $im->filledPolygon($poly, $me->color($s, $opts));
-	  }else{
-	      $im->line( $me->xdatapt($x),  $me->ydatapt($b),
-			 $me->xdatapt($x),  $me->ydatapt($a),
-			 $me->color($s, $opts) );
+	  if( defined($a) || !$skipundef ){
+
+	      if( defined($px) && ($me->xdatapt($x) - $me->xdatapt($px) > 1) ){
+		  my $poly = GD::Polygon->new;
+		  $px = $x - $limit if $limit && $x - $px > $limit;
+		  
+		  $poly->addPt($me->xdatapt($px), $me->ydatapt($pn));
+		  $poly->addPt($me->xdatapt($px), $me->ydatapt($pm));
+		  $poly->addPt($me->xdatapt($x),  $me->ydatapt($b));
+		  $poly->addPt($me->xdatapt($x),  $me->ydatapt($a));
+		  $im->filledPolygon($poly, $me->color($s, $opts));
+	      }else{
+		  $im->line( $me->xdatapt($x),  $me->ydatapt($b),
+			     $me->xdatapt($x),  $me->ydatapt($a),
+			     $me->color($s, $opts) );
+	      }
 	  }
 	  $px = $x; $pn = $a; $pm = $b;
     }
@@ -888,6 +975,7 @@ sub draw_points {
     my $opts = shift;
     
     my $im = $me->{img};
+    my $skipundef = $opts->{skip_undefined} || $me->{skip_undefined};
     
     foreach my $s ( @$data ){
 	my $x = $s->{time};
@@ -896,7 +984,8 @@ sub draw_points {
 	my $c = $me->color($s, $opts);
 
 	next if $x < $me->{xd_min} || $x > $me->{xd_max};
-
+	next if !defined($y) && $skipundef;
+	
 	while( $d > 0 ){
 	    $im->arc( $me->xdatapt($x),  $me->ydatapt($y),
 		      $d, $d, 0, 360,
@@ -906,11 +995,61 @@ sub draw_points {
     }
 }
 
+sub def_box_width {
+    my $ta = shift;
+    my $tb = shift;
+    my $nd = shift;
+
+    return ($tb - $ta) / ($nd - 1) if $nd > 1;
+    return ($tb - $ta) / $nd       if $nd;
+    1;
+}
+
+sub draw_boxes {
+    my $me   = shift;
+    my $data = shift;
+    my $opts = shift;
+    
+    my $im = $me->{img};
+    my $defwid = def_box_width($data->[0]{time}, $data->[-1]{time}, scalar(@$data));
+    my $thick  = $opts->{thickness} || $me->{thickness};
+    my $skipundef = $opts->{skip_undefined} || $me->{skip_undefined};
+    
+    $me->set_thickness( $thick ) if $thick;
+    
+    foreach my $s ( @$data ){
+	my $x = $s->{time};
+	my $y = $s->{value};
+	my $w = $s->{width} || $opts->{width} || $me->{boxwidth} || $defwid;
+	my $c = $me->color($s, $opts);
+	my $y0 = $opts->{boxbase} || $me->{boxbase} || 0;
+	
+	next if $x < $me->{xd_min} || $x > $me->{xd_max};
+	next if !defined($y) && $skipundef;
+
+	# because GD cares...
+	my $ya = $y > $y0 ? $y : $y0;
+	my $yb = $y > $y0 ? $y0 : $y;
+	
+	if( $opts->{filled} || $s->{filled} ){
+	    $im->filledRectangle( $me->xdatapt($x - $w/2), $me->ydatapt($ya),
+				  $me->xdatapt($x + $w/2), $me->ydatapt($yb),
+				  $c);
+	}else{
+	    $im->rectangle( $me->xdatapt($x - $w/2), $me->ydatapt($ya),
+			    $me->xdatapt($x + $w/2), $me->ydatapt($yb),
+			    $c);
+	}
+    }
+    
+    $me->set_thickness( 1 ) if $thick;
+}
+
 
 =head1 EXAMPLE IMAGES
 
     http://argus.tcp4me.com/shots.html
-    http://search.cpan.org/src/JAW/Chart-Strip-1.01/eg/
+    http://search.cpan.org/src/JAW/Chart-Strip-1.03/eg/
 
 =head1 BUGS
 
