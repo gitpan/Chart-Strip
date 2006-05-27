@@ -15,7 +15,7 @@ for(my $t=10; $t<210; $t++){
     };
 }
 
-$c->add_data( $data, {color => 'FF0000'} );
+$c->add_data( $data, {style => 'line', color => 'FF0000'} );
 
 my $p = $c->png();
 

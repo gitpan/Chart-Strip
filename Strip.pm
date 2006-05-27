@@ -5,9 +5,9 @@
 # Date: 2002-Nov-01 16:11 (EST)
 # Function: draw strip charts
 #
-# $Id: Strip.pm,v 1.13 2006/05/23 15:43:11 jaw Exp jaw $
+# $Id: Strip.pm,v 1.14 2006/05/27 18:20:39 jaw Exp jaw $
 
-$Chart::Strip::VERSION = "1.03";
+$Chart::Strip::VERSION = "1.04";
 
 =head1 NAME
 
@@ -1049,7 +1049,7 @@ sub draw_boxes {
 =head1 EXAMPLE IMAGES
 
     http://argus.tcp4me.com/shots.html
-    http://search.cpan.org/src/JAW/Chart-Strip-1.03/eg/
+    http://search.cpan.org/src/JAW/Chart-Strip-1.04/eg/
 
 =head1 BUGS
 

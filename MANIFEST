@@ -1,6 +1,7 @@
 MANIFEST
 README
 INSTALL
+CHANGES
 Makefile.PL
 Strip.pm
 t/test1.t
@@ -17,3 +18,4 @@ eg/ex2.png
 eg/ex3.png
 eg/ex4.png
 eg/ex5.png
+META.yml                                 Module meta-data (added by MakeMaker)
