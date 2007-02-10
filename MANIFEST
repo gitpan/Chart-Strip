@@ -6,6 +6,7 @@ Makefile.PL
 Strip.pm
 t/test1.t
 t/test2.t
+t/test3.t
 eg/index.html
 eg/Makefile
 eg/ex1.pl

@@ -5,9 +5,9 @@
 # Date: 2002-Nov-01 16:11 (EST)
 # Function: draw strip charts
 #
-# $Id: Strip.pm,v 1.14 2006/05/27 18:20:39 jaw Exp jaw $
+# $Id: Strip.pm,v 1.15 2006/06/25 17:48:59 jaw Exp jaw $
 
-$Chart::Strip::VERSION = "1.04";
+$Chart::Strip::VERSION = "1.05";
 
 =head1 NAME
 
@@ -185,6 +185,20 @@ use Carp;
 use POSIX;
 use strict;
 
+my $LT_HM = 1;	# time
+my $LT_HR = 2;	# time/day
+my $LT_DW = 3;	# day/date
+my $LT_DM = 4;	# date/yr
+my $LT_YR = 5;	# year
+
+my $MT_NO = 0;	# none
+my $MT_HR = 1;	# hrs
+my $MT_MN = 2;	# midnight
+my $MT_SU = 3;	# sunday
+my $MT_M1 = 4;	# 1st
+my $MT_Y1 = 5;	# new years
+
+
 sub new {
     my $class = shift;
     my %param = @_;
@@ -239,11 +253,11 @@ sub new {
     $im->setStyle(gdTransparent, $me->{color}{gray}, gdTransparent, gdTransparent);
 
     $im->interlaced('true');
-    $me->{img}->transparent($me->{color}{white})
+    $im->transparent($me->{color}{white})
 	if $me->{transparent};
 
-    $me->{img}->rectangle(0, 0, $me->{width}-1, $me->{height}-1,
-	     $me->color({ color => ($me->{border_color} || 'black') }))
+    $im->rectangle(0, 0, $me->{width}-1, $me->{height}-1,
+		   $me->color({ color => ($me->{border_color} || 'black') }))
 	if $me->{draw_border};
 
     $me;
@@ -552,7 +566,7 @@ sub pretty {
 	}
 	elsif( $ay < 1/$b**2 ){
 	    $y *= $b ** 3; $st *= $b ** 3;
-	    $sc = 'p';
+	    $sc = 'n';
 	}
 	elsif( $ay < 1/$b ){
 	    $y *= $b**2; $st *= $b**2;
@@ -563,7 +577,11 @@ sub pretty {
 	    $sc = 'm';
 	}
     }else{
-	if( $ay >= $b**3 ){
+	if( $ay >= $b**4 ){
+	    $y /= $b**4;  $st /= $b**4;
+	    $sc = 'T';
+	}
+	elsif( $ay >= $b**3 ){
 	    $y /= $b**3;  $st /= $b**3;
 	    $sc = 'G';
 	}
@@ -628,24 +646,25 @@ sub ytics {
 	$me->adjust();
     }
 
-    $me->{grid}{y} = [ @tics ];
+    $me->{grid}{y} = \@tics;
 }
 
 sub drawgrid {
     my $me = shift;
+    my $im = $me->{img};
     
     foreach my $tic (@{$me->{grid}{y}}){
 	# ytics + horiz lines
 	my $yy = $tic->[0];
-	$me->{img}->line($me->xpt(-1), $yy, $me->xpt(-4), $yy,
+	$im->line($me->xpt(-1), $yy, $me->xpt(-4), $yy,
 			 $me->{color}{black});
-	$me->{img}->line($me->xpt(0), $yy, $me->{width} - $me->{margin_right}, $yy,
+	$im->line($me->xpt(0), $yy, $me->{width} - $me->{margin_right}, $yy,
 			 gdStyled) if $me->{draw_grid};
 
 	if( $me->{draw_tic_labels} ){
 	    my $label = $tic->[1];
 	    my $w = $tic->[2];
-	    $me->{img}->string(gdTinyFont, $me->xpt(-$w), $yy-4,
+	    $im->string(gdTinyFont, $me->xpt(-$w), $yy-4,
 			       $label,
 			       $me->{color}{black});
 	}
@@ -655,17 +674,18 @@ sub drawgrid {
 	# xtics + vert lines
 	my( $t, $ll, $label ) = @$tic;
 
-	if( $ll ){
+	# supress solid line if adjacent to axis
+	if( $ll && ($t != $me->{xd_min}) ){
 	    # solid line, red label
-	    $me->{img}->line($me->xdatapt($t), $me->{margin_top},
+	    $im->line($me->xdatapt($t), $me->{margin_top},
 			     $me->xdatapt($t), $me->ypt(-4),
 			     $me->{color}{black} );
 	}else{
 	    # tic and grid
-	    $me->{img}->line($me->xdatapt($t), $me->ypt(-1),
+	    $im->line($me->xdatapt($t), $me->ypt(-1),
 			     $me->xdatapt($t), $me->ypt(-4),
 			     $me->{color}{black} );
-	    $me->{img}->line($me->xdatapt($t), $me->{margin_top},
+	    $im->line($me->xdatapt($t), $me->{margin_top},
 			     $me->xdatapt($t), $me->ypt(0),
 			     gdStyled ) if $me->{draw_grid};
 	}
@@ -677,88 +697,206 @@ sub drawgrid {
 		$a = $me->xdatapt($t) - $me->{width} + length($label) * 6 + 2;
 	    }
 	    
-	    $me->{img}->string(gdSmallFont, $me->xdatapt($t)-$a, $me->ypt(-6),
+	    $im->string(gdSmallFont, $me->xdatapt($t)-$a, $me->ypt(-6),
 			       $label, $ll ? $me->{color}{red} : $me->{color}{black} );
 	}
     }
 }
 
-# this is much too ickky, please re-write
+sub xtic_range_data {
+    my $me    = shift;	# not used
+    my $range = shift;
+
+    my $range_hrs  = $range / 3600;
+    my $range_days = $range_hrs / 24;
+
+    # return: step, labeltype, marktype, lti, tmod
+    
+    if( $range < 720 ){
+	(60, $LT_HM, $MT_HR, 1, 1);		# tics: 1 min
+    }
+    elsif( $range < 1800 ){
+	(300, $LT_HM, $MT_HR, 1, 5);		# tics: 5 min
+    }
+    elsif( $range_hrs < 2 ){
+	(600, $LT_HM, $MT_HR, 1, 10);		# tics: 10 min
+    }
+    elsif( $range_hrs < 6 ){
+	(1800, $LT_HR, $MT_MN, 1, 30);		# tics: 30 min
+    }
+    elsif( $range_hrs < 13 ){
+	(3600, $LT_HR, $MT_MN, 2, 1);		# tics: 1 hr
+    }
+    elsif( $range_hrs < 25 ){
+	(3600, $LT_HR, $MT_MN, 2, 2);		# tics: 2 hrs
+    }
+    elsif( $range_hrs < 50 ){
+	(3600, $LT_HR, $MT_MN, 2, 4);		# tics: 4 hrs
+    }
+    elsif( $range_hrs < 75 ){
+	(3600, $LT_HR, $MT_MN, 2, 6);		# tics: 6 hrs
+    }
+
+    # NB: days shorter or longer than 24 hours are corrected for below
+    elsif( $range_days < 15 ){
+	(3600*24, $LT_DW, $MT_SU, 3, 1);	# tics 1 day
+    }
+    elsif( $range_days < 22 ){
+	(3600*24, $LT_DM, $MT_M1, 3, 2);	# tics: 2 days
+    }
+    elsif( $range_days < 80 ){
+	(3600*24, $LT_DM, $MT_M1, 3, 7);	# tics: 7 days
+    }
+    elsif( $range_days < 168 ){
+	(3600*24, $LT_DM, $MT_Y1, 3, 14);	# tics: 14 days
+    }
+    # NB: months shorter than 31 days are corrected for below
+    elsif( $range_days < 370 ){
+	(3600*24*31, $LT_DM, $MT_Y1, 4, 1);	# tics: 1 month
+    }
+    elsif( $range_days < 500 ){
+	(3600*24*31, $LT_DM, $MT_Y1, 4, 2);	# tics: 2 month
+    }
+    elsif( $range_days < 1000 ){
+	(3600*24*31, $LT_DM, $MT_Y1, 4, 3);	# tics: 3 month
+    }
+    elsif( $range_days < 2000 ){
+	(3600*24*31, $LT_DM, $MT_NO, 4, 6);	# tics: 6 month
+    }
+    
+    else{
+	# NB: years less than 366 days are corrected for below
+	(3600*24*366, $LT_YR, $MT_NO, 4, 12);	# tics: 1 yr
+    }
+}
+
+sub xtic_align_initial {
+    my $me   = shift;
+    my $step = shift;
+    
+    my $t = ($step < 3600) ? (int($me->{xd_min} / $step) * $step)
+	: (int($me->{xd_min} / 3600) * 3600);
+
+    if( $step >= 3600*24*365 ){
+	while(1){
+	    # search for 1jan
+	    my @lt = localtime $t;
+	    last if $lt[4] == 0 && $lt[3] == 1 && $lt[2] == 0;
+	    # jump fwd: 1M, 1D, or 1H
+	    my $dt = ($lt[4] != 11) ? 24*30 : ($lt[3] < 30) ? 24 : 1;
+	    $t += $dt * 3600;
+	}
+    }
+    elsif( $step >= 3600*24*31 ){
+	while(1){
+	    # find 1st of mon
+	    my @lt = localtime $t;
+	    last if $lt[3] == 1 && $lt[2] == 0;
+	    my $dt = ($lt[3] < 28) ? 24 : 1;
+	    $t += $dt * 3600;
+	}
+    }
+    elsif( $step >= 3600*24 ){
+	while(1){
+	    # search for midnight
+	    my @lt = localtime $t;
+	    last unless $lt[2];
+	    $t += 3600;
+	}
+    }
+
+    $t;
+}
+
 sub xtics {
     my $me = shift;
-    my( $r, $step, $rd, $n2, $n3, $n4, $lt, $low, $t, @tics );
+    my @tics;
 
     # this is good for (roughly) 10 mins - 10 yrs
     return if $me->{xd_max} == $me->{xd_min};
-    $r = ($me->{xd_max} - $me->{xd_min} ) / 3600;	# => hours
-    $rd   = $r / 24;					# days
-    $step = 3600;
-    $n2   = 24; $n3 = $n4 = 1;
-    $low  = int($me->{xd_min} / 3600) * 3600;
-    
-    if( $r < 2 ){ 		# less than 2 hrs
-	$low = int($me->{xd_min} / 600) * 600;
-	$n2 = 1;
-	$lt = 1;
-	$step = 10 * 60;
-    }elsif( $r < 48 ){		# less than 2 days
-	$n2  = ($r < 13) ? 1 : ($r < 24) ? 2 : 4;
-	$lt  = 1;
-    }
-    elsif( $r < 360 ){		# less than ~ 2 weeks
-	$lt  = 2;
-    }elsif( $rd < 1500 ){	# less than ~ 4yrs
-	$n3  = ($rd < 80)  ? 7 : ($rd < 168) ? 14 : 32;
-	$n4  = ($rd < 370) ? 1 : ($rd < 500) ? 2 : 4;
-	$lt  = 3;
-    }else{
-	$n3 = 32; $n4 = 12;
-	$lt  = 4;
-    }
 
-    # print STDERR "xtics min=$me->{xd_min} max=$me->{xd_max}  r=$r, st=$step, low=$low, $n2/$n3/$n4\n";
-    for( $t=$low; $t<$me->{xd_max}; $t+=$step ){
-	my $ll;
+    my $range      = $me->{xd_max} - $me->{xd_min};
+    my $range_hrs  = $range / 3600;
+    my $range_days = $range_hrs / 24;
+    
+    my ($step, $labtyp, $marktyp, $lti, $tmod) = $me->xtic_range_data( $range );
+    my $t = $me->xtic_align_initial( $step );
+
+    # print "days: $range_days, lt: $labtyp, lti: $lti, tmod: $tmod, st: $step\n";
+    # print STDERR "t: $t ", scalar(localtime $t), "\n";
+    
+    for( ; $t<$me->{xd_max}; $t+=$step ){
+	my $redmark = 0;
 	next if $t < $me->{xd_min};
-	my @lt = localtime $t;
-	next if $lt[2] % $n2;
-	next if ($lt[3] - 1) % $n3 || (($n3!=1) && $lt[3] > 22 );
-	next if $lt[4] % $n4;
-	if( $lt == 1 && !$lt[2] && !$lt[1] ||      # midnight
-	    $lt == 2 && !$lt[6] ||                 # sunday
-	    $lt == 3 && $lt[3] == 1 && $rd < 60 || # 1st of month
-	    $lt == 3 && $lt[3] == 1 && $lt[4] == 0 # Jan 1
-	    ){
-	    $ll = 1;
+	my @lt  = localtime $t;
+	my @rlt = @lt;
+	# months go from 0. days from 1. absurd!
+	$lt[3]--;
+	# mathematically, 28 is divisible by 7. but that just looks silly.
+	$lt[3] = 22 if $lt[3] > 22 && $lti==3 && $tmod >= 7;
+
+	if( $step >= 3600*24 && $lt[2] ){
+	    # handle daylight saving time changes - resync to midnight
+	    my $dt = ($lt[2] > 12 ? $lt[2] - 24 : $lt[2]) * 3600;
+	    $dt += $lt[1] * 60;
+	    $t -= $dt;
+	    redo;
+	}
+	if( $step >= 3600*24*31 && $lt[3] ){
+	    # some months are not 31 days!
+	    # also corrects years that do not leap
+	    my $dt = $lt[3] * 3600*24;
+	    $t -= $dt;
+	    redo;
 	}
 	
+	next if $lt[$lti] % $tmod;
+	next if $lt[3] && $lti > 3;
+	next if $lt[2] && $lti > 2;
+	next if $lt[1] && $lti > 1;
+	next if $lt[0] && $lti > 0;
+
+
+	$redmark = 1 if $marktyp == $MT_HR && !$lt[1];			# on the hour
+	$redmark = 1 if $marktyp == $MT_MN && !$lt[2] && !$lt[1];	# midnight
+	$redmark = 1 if $marktyp == $MT_SU && !$lt[6];			# sunday
+	$redmark = 1 if $marktyp == $MT_M1 && !$lt[3];			# 1st of month
+	$redmark = 1 if $marktyp == $MT_Y1 && !$lt[3] && !$lt[4];	# 1 jan
+	
 	my $label;
-	if( $lt == 1){
-	    $label = sprintf "%d:%0.2d", $lt[2], $lt[1];	# time
+	# NB: strftime obeys LC_TIME for localized day/month names
+	# (if locales are supported in the OS and perl)
+	if( $labtyp == $LT_HM ){
+	    $label = sprintf "%d:%0.2d", $rlt[2], $rlt[1];	# time
 	}
-	if( $lt == 2 ){
-	    if( $ll ){
-		# NB: strftime obeys LC_TIME for localized day/month names
-		# (if locales are supported in the OS and perl)
-		$label = strftime("%d/%b", @lt);	# date DD/Mon
+	if( $labtyp == $LT_HR ){
+	    if( $redmark ){
+		$label = strftime("%d/%b", @rlt);		# date DD/Mon
 	    }else{
-		$label = strftime("%a", @lt);		# day of week
+		$label = sprintf "%d:%0.2d", $rlt[2], $rlt[1];	# time
 	    }
 	}
-	if( $lt == 3){
-	    if( $lt[3] == 1 && $lt[4] == 0 ){
-		$label = $lt[5] + 1900;			# year
+	if( $labtyp == $LT_DW ){
+	    if( $redmark ){
+		$label = strftime("%d/%b", @rlt);	# date DD/Mon
 	    }else{
-		$label = strftime("%d/%b", @lt);	# date DD/Mon
+		$label = strftime("%a", @rlt);		# day of week
 	    }
 	}
-	if( $lt == 4){
-	    $label = $lt[5] + 1900; # year
+	if( $labtyp == $LT_DM ){
+	    if( !$lt[3] && !$lt[4] ){
+		$label = $rlt[5] + 1900;		# year
+	    }else{
+		$label = strftime("%d/%b", @rlt);	# date DD/Mon
+	    }
 	}
-	push @tics, [$t, $ll, $label];
+	if( $labtyp == $LT_YR ){
+	    $label = $rlt[5] + 1900; 			# year
+	}
+	push @tics, [$t, $redmark, $label];
     }
-    $me->{grid}{x} = [@tics];
-        
+    $me->{grid}{x} = \@tics;
+    
 }
 
 # it shall be inventoried, and every particle and utensil
@@ -864,32 +1002,37 @@ sub draw_filled {
     my $im = $me->{img};
     my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
     my $skipundef = $opts->{skip_undefined} || $me->{skip_undefined};
-    my($px, $py);
+    my($px, $py, $pxdpt, $pydpt);
+    my $ypt0 = $me->ypt(0);
     
     foreach my $s ( @$data ){
 	my $x = $s->{time};
 	my $y = $s->{value};
-
+	
 	next if $x < $me->{xd_min} || $x > $me->{xd_max};
 
-	if( defined($y) || !$skipundef ){
+	my $xdpt  = $me->xdatapt($x);
+	my $ydpt  = $me->ydatapt($y);
 
-	    if( defined($px) && ($me->xdatapt($x) - $me->xdatapt($px) > 1) ){
-		$px = $x - $limit if $limit && $x - $px > $limit;
-		
+	if( defined($y) || !$skipundef ){
+	    
+	    if( defined($px) && ($xdpt - $pxdpt > 1) && (!$limit || $x - $px <= $limit) ){
 		my $poly = GD::Polygon->new;
-		$poly->addPt($me->xdatapt($px), $me->ypt(0));
-		$poly->addPt($me->xdatapt($px), $me->ydatapt($py));
-		$poly->addPt($me->xdatapt($x),  $me->ydatapt($y));
-		$poly->addPt($me->xdatapt($x),  $me->ypt(0));
+		$poly->addPt($pxdpt, $ypt0);
+		$poly->addPt($pxdpt, $pydpt);
+		$poly->addPt($xdpt,  $ydpt);
+		$poly->addPt($xdpt,  $ypt0);
 		$im->filledPolygon($poly, $me->color($s, $opts));
 	    }else{
-		$im->line( $me->xdatapt($x), $me->ypt(0),
-			   $me->xdatapt($x), $me->ydatapt($y),
+		$im->line( $xdpt, $ypt0,
+			   $xdpt, $ydpt,
 			   $me->color($s, $opts) );
 	    }
+	    $px = $x; $pxdpt = $xdpt;
+	    $py = $y; $pydpt = $ydpt;
+	}else{
+	    $px = undef;
 	}
-	$px = $x; $py = $y;
     }
 }
 
@@ -902,7 +1045,7 @@ sub draw_line {
     my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
     my $thick = $opts->{thickness} || $me->{thickness};
     my $skipundef = $opts->{skip_undefined} || $me->{skip_undefined};
-    my($px, $py);
+    my($px, $py, $pxdpt, $pydpt);
 
     $me->set_thickness( $thick ) if $thick;
     
@@ -911,19 +1054,24 @@ sub draw_line {
 	my $y = $s->{value};
 
 	next if $x < $me->{xd_min} || $x > $me->{xd_max};
+	
+	my $xdpt  = $me->xdatapt($x);
+	my $ydpt  = $me->ydatapt($y);
 
 	if( defined($y) || !$skipundef ){
-	    if( defined($py) ){
-		$px = $x - $limit if $limit && $x - $px > $limit;
-		$im->line( $me->xdatapt($px), $me->ydatapt($py),
-			   $me->xdatapt($x),  $me->ydatapt($y),
+	    if( defined($px) && (!$limit || $x - $px <= $limit) ){
+		$im->line( $pxdpt, $pydpt,
+			   $xdpt,  $ydpt,
 			   $me->color($s, $opts) );
 	    }else{
-		$im->setPixel($me->xdatapt($x),  $me->ydatapt($y),
+		$im->setPixel($xdpt,  $ydpt,
 			      $me->color($s, $opts) );
 	    }
+	    $px = $x; $pxdpt = $xdpt;
+	    $py = $y; $pydpt = $ydpt;
+	}else{
+	    $px = undef;
 	}
-	$px = $x; $py = $y;
     }
     $me->set_thickness( 1 ) if $thick;
 }
@@ -932,40 +1080,42 @@ sub draw_range {
     my $me   = shift;
     my $data = shift;
     my $opts = shift;
-
+    
     my $im = $me->{img};
     my $limit = $me->{limit_factor} * ($me->{xd_max} - $me->{xd_min}) / @$data;
     my $skipundef = $opts->{skip_undefined} || $me->{skip_undefined};
-    my($px, $pn, $pm);
+    my($px, $pn, $pm, $pxdpt);
     
     foreach my $s ( @$data ){
-	  my $x = $s->{time};
-	  my $a = defined $s->{min} ? $s->{min} : $s->{value};
-	  my $b = defined $s->{max} ? $s->{max} : $s->{value};
-
-	  next if $x < $me->{xd_min} || $x > $me->{xd_max};
-
-	  $a = $b if !defined($a) && $skipundef;
-	  $b = $a if !defined($b) && $skipundef;
-	  
-	  if( defined($a) || !$skipundef ){
-
-	      if( defined($px) && ($me->xdatapt($x) - $me->xdatapt($px) > 1) ){
-		  my $poly = GD::Polygon->new;
-		  $px = $x - $limit if $limit && $x - $px > $limit;
-		  
-		  $poly->addPt($me->xdatapt($px), $me->ydatapt($pn));
-		  $poly->addPt($me->xdatapt($px), $me->ydatapt($pm));
-		  $poly->addPt($me->xdatapt($x),  $me->ydatapt($b));
-		  $poly->addPt($me->xdatapt($x),  $me->ydatapt($a));
-		  $im->filledPolygon($poly, $me->color($s, $opts));
-	      }else{
-		  $im->line( $me->xdatapt($x),  $me->ydatapt($b),
-			     $me->xdatapt($x),  $me->ydatapt($a),
-			     $me->color($s, $opts) );
-	      }
-	  }
-	  $px = $x; $pn = $a; $pm = $b;
+	my $x = $s->{time};
+	my $a = defined $s->{min} ? $s->{min} : $s->{value};
+	my $b = defined $s->{max} ? $s->{max} : $s->{value};
+	my $xdpt  = $me->xdatapt($x);
+	
+	next if $x < $me->{xd_min} || $x > $me->{xd_max};
+	
+	$a = $b if !defined($a) && $skipundef;
+	$b = $a if !defined($b) && $skipundef;
+	
+	if( defined($a) || !$skipundef ){
+	    
+	    if( defined($px) && ($xdpt - $pxdpt > 1) && (!$limit || $x - $px <= $limit) ){
+		my $poly = GD::Polygon->new;
+		$poly->addPt($pxdpt, $me->ydatapt($pn));
+		$poly->addPt($pxdpt, $me->ydatapt($pm));
+		$poly->addPt($xdpt,  $me->ydatapt($b));
+		$poly->addPt($xdpt,  $me->ydatapt($a));
+		$im->filledPolygon($poly, $me->color($s, $opts));
+	    }else{
+		$im->line( $xdpt,  $me->ydatapt($b),
+			   $xdpt,  $me->ydatapt($a),
+			   $me->color($s, $opts) );
+	    }
+	    $px = $x; $pn = $a; $pm = $b;
+	    $pxdpt = $xdpt;
+	}else{
+	    $px = undef;
+	}
     }
 }
 
@@ -985,9 +1135,11 @@ sub draw_points {
 
 	next if $x < $me->{xd_min} || $x > $me->{xd_max};
 	next if !defined($y) && $skipundef;
+	my $xdpt = $me->xdatapt($x);
+	my $ydpt = $me->ydatapt($y);
 	
 	while( $d > 0 ){
-	    $im->arc( $me->xdatapt($x),  $me->ydatapt($y),
+	    $im->arc( $xdpt, $ydpt,
 		      $d, $d, 0, 360,
 		      $c );
 	    $d -= 2;
@@ -1049,7 +1201,7 @@ sub draw_boxes {
 =head1 EXAMPLE IMAGES
 
     http://argus.tcp4me.com/shots.html
-    http://search.cpan.org/src/JAW/Chart-Strip-1.04/eg/
+    http://search.cpan.org/src/JAW/Chart-Strip-1.05/eg/
 
 =head1 BUGS
 
