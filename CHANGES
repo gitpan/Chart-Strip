@@ -1,4 +1,11 @@
 
+1.07
+        drop shadows
+        smooth curves
+
+1.06
+	ylabel placement calculation
+
 1.05
 	xtic changes and speedups
 
