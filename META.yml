@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Chart-Strip
-version:            1.07
+version:            1.08
 abstract:           Draw strip chart type graphs.
 author:
     - Jeff Weisberg <http://www.tcp4me.com/>

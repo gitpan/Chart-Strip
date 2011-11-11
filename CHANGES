@@ -1,4 +1,7 @@
 
+1.08
+        fixed rare divide-by-zero issue [David Precious]
+
 1.07
         drop shadows
         smooth curves

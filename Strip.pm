@@ -5,9 +5,9 @@
 # Date: 2002-Nov-01 16:11 (EST)
 # Function: draw strip charts
 #
-# $Id: Strip.pm,v 1.21 2009/03/28 17:34:54 jaw Exp $
+# $Id: Strip.pm,v 1.22 2011/11/11 00:38:11 jaw Exp $
 
-$Chart::Strip::VERSION = "1.07";
+$Chart::Strip::VERSION = "1.08";
 
 =head1 NAME
 
@@ -697,6 +697,9 @@ sub ytics {
 	    $is = 10 ** floor( log($tp)/log(10) );
 	}
 	$st  = floor( $tp / $is ) * $is; # -> 4 - 8, ceil -> 2 - 4
+        # mathematically, tp/is cannot be less than 1
+        # but due to floating-point lossage, in rare cases, it might
+        $st ||= $is;
 	$low = int( $min / $st ) * $st;
 	for my $i ( 0 .. (2 * $me->{n_y_tics} + 2) ){
 	    my $y = $low + $i * $st;
@@ -1427,7 +1430,7 @@ sub draw_boxes {
 =head1 EXAMPLE IMAGES
 
     http://argus.tcp4me.com/shots.html
-    http://search.cpan.org/src/JAW/Chart-Strip-1.07/eg/
+    http://search.cpan.org/src/JAW/Chart-Strip-1.07/eg/index.html
 
 =head1 LICENSE
 
